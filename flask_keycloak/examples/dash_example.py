@@ -1,6 +1,6 @@
 from dash import dcc, html, Dash
-from dash.dependencies import Input, Output, State
-from flask import Flask, session, g, request, redirect
+from dash.dependencies import Input, Output
+from flask import Flask, session, g
 
 # local imports
 from flask_keycloak import FlaskKeycloak
@@ -13,7 +13,7 @@ APP_HOST = "http://127.0.0.1"
 APP_PORT = 5007
 CLIENT_ID = 'keycloak_clients'
 REALM_NAME = 'dev'
-CLIENT_SECRET_KEY = '2oh5SxbEnMVLeF7c95xfzkGw3wYYMGvJ'
+CLIENT_SECRET_KEY = 'vlRBHhqzuqkWPiJisAj8zlFVJNVijWsj'
 KEYCLOAK_PYTHON_CERT = False
 
 conf = dict(server_url=KEYCLOAK_HOST,
