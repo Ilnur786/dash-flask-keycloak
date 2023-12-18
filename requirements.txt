@@ -1,3 +1,4 @@
 dash
 flask
 python-keycloak
+PyJWT[crypto]
