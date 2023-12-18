@@ -1,4 +1,4 @@
-from flask import Flask, session, g, request, redirect, jsonify
+from flask import Flask, session, g
 
 # local imports
 from flask_keycloak import FlaskKeycloak
