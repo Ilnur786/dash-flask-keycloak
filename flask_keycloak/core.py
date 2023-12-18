@@ -39,13 +39,6 @@ class AuthHandler:
         self.state_control = state_control
         self.well_known_metadata = self.keycloak_openid.well_known()
 
-    def clean_session(self, request, auth_uri):
-        response = redirect(auth_uri)
-        local_session = self.session_interface.open_session(self.config_object, request)
-        local_session.clear()
-        self.session_interface.save_session(self.config_object, local_session, response=response)
-        return response
-
     def is_token_valid(self, request):
         local_session = self.session_interface.open_session(self.config_object, request)
         token = local_session.get("token", None)
@@ -63,17 +56,30 @@ class AuthHandler:
             except jwt.InvalidTokenError:
                 return False
             else:
+                # TODO: What if this condition doesn't pass?
                 if data == local_session.get("data", None):
                     return True
+        return True
+
+    def is_state_valid(self, request):
+        local_session = self.session_interface.open_session(self.config_object, request)
+        session_state = local_session.get("state", None)
+        request_state = request.args.get("state")
+        if session_state is not None and request_state is not None:
+            if session_state != request_state:
+                return False
         return True
 
     def is_logged_in(self, request):
         return "token" in self.session_interface.open_session(self.config_object, request)
 
-    def auth_url(self, callback_uri):
+    def auth_url(self, state, callback_uri):
         # TODO: Add state and control it after getting response from keycloak
-
-        return self.keycloak_openid.auth_url(redirect_uri=callback_uri, scope="openid", state="")
+        if self.state_control:
+            auth_url = self.keycloak_openid.auth_url(redirect_uri=callback_uri, scope="openid", state=state)
+        else:
+            auth_url = self.keycloak_openid.auth_url(redirect_uri=callback_uri, scope="openid", state="")
+        return auth_url
 
     def login(self, request, response, **kwargs):
         try:
@@ -109,6 +115,13 @@ class AuthHandler:
         self.session_interface.save_session(self.config_object, session, response)
         return response
 
+    def clean_session(self, request, auth_uri):
+        response = redirect(auth_uri)
+        local_session = self.session_interface.open_session(self.config_object, request)
+        local_session.clear()
+        self.session_interface.save_session(self.config_object, local_session, response=response)
+        return response
+
     def logout(self, response=None):
         self.keycloak_openid.logout(session["token"]["refresh_token"])
         session.clear()
@@ -128,8 +141,8 @@ class AuthMiddleWare:
         self.callback_path = prefix_callback_path + "/keycloak/callback"
         self.abort_on_unauthorized = abort_on_unauthorized
 
-    def get_auth_uri(self, environ):
-        return self.auth_handler.auth_url(self.get_callback_uri(environ))
+    def get_auth_uri(self, state, environ):
+        return self.auth_handler.auth_url(state, self.get_callback_uri(environ))
 
     def get_callback_uri(self, environ):
         parse_result = urllib.parse.urlparse(self.get_redirect_uri(environ))
@@ -148,13 +161,20 @@ class AuthMiddleWare:
     def __call__(self, environ, start_response):
         response = None
         request = Request(environ)
+        state = uuid4().hex
         # If the uri has been whitelisted, just proceed.
         if check_match_in_list(self.uri_whitelist, request.path):
             return self.app(environ, start_response)
         # Check token validity, especially token expiring
         if not self.auth_handler.is_token_valid(request):
-            response = self.auth_handler.clean_session(request, self.get_auth_uri(environ))
+            response = self.auth_handler.clean_session(request, self.get_auth_uri(state, environ))
             return response(environ, start_response)
+        # Check session state validity
+        if self.auth_handler.state_control and not self.auth_handler.is_state_valid(request):
+            # TODO: Maybe return Response("Invalid state", status=400)?
+            response = self.auth_handler.clean_session(request, self.get_auth_uri(state, environ))
+            return response(environ, start_response)
+            # return Response("Invalid state", start_response)
         # If we are logged in, just proceed.
         if self.auth_handler.is_logged_in(request):
             return self.app(environ, start_response)
@@ -175,7 +195,8 @@ class AuthMiddleWare:
             if check_match_in_list(self.abort_on_unauthorized, request.path):
                 response = Response("Unauthorized", 401)
             else:
-                response = redirect(self.get_auth_uri(environ))
+                response = redirect(self.get_auth_uri(state, environ))
+                response = self.auth_handler.set_session(request, response, state=state)
         # Save the session.
         if response:
             return response(environ, start_response)
