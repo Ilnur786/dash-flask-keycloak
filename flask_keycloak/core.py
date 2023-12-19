@@ -1,14 +1,16 @@
 import json
+import os
 import re
+import ssl
 import urllib.parse
-from typing import Union
+from typing import Union, List
+from uuid import uuid4
 
 import jwt
-from uuid import uuid4
-from flask import redirect, session, request, Response, g
+from flask import Flask, redirect, session, request, Response, g
 from jwt import PyJWKClient
 from keycloak.exceptions import KeycloakConnectionError, KeycloakAuthenticationError, KeycloakPostError, \
-    KeycloakGetError
+    KeycloakGetError, KeycloakError
 from keycloak.keycloak_openid import KeycloakOpenID
 from werkzeug.wrappers import Request
 
@@ -55,10 +57,11 @@ class AuthHandler:
                 )
             except jwt.InvalidTokenError:
                 return False
-            else:
-                # TODO: What if this condition doesn't pass?
-                if data == local_session.get("data", None):
-                    return True
+            # TODO: Should be tested
+            # else:
+            #     # TODO: What if this condition doesn't pass?
+            #     if data == local_session.get("data", None):
+            #         return True
         return True
 
     def is_state_valid(self, request):
@@ -74,7 +77,6 @@ class AuthHandler:
         return "token" in self.session_interface.open_session(self.config_object, request)
 
     def auth_url(self, state, callback_uri):
-        # TODO: Add state and control it after getting response from keycloak
         if self.state_control:
             auth_url = self.keycloak_openid.auth_url(redirect_uri=callback_uri, scope="openid", state=state)
         else:
@@ -86,7 +88,7 @@ class AuthHandler:
             # Get access token from Keycloak.
             try:
                 token = self.keycloak_openid.token(**kwargs)
-            except KeycloakPostError as e:  # TODO: Need to clean session and redirect to login page
+            except KeycloakPostError as e:
                 raise e
             # JWT Decode
             jwks_client = PyJWKClient(self.well_known_metadata["jwks_uri"], ssl_context=self.ssl_context)
@@ -104,7 +106,7 @@ class AuthHandler:
             # Bind info to the session.
             response = self.set_session(request, response, token=token, data=data, user=user)
         except KeycloakAuthenticationError as e:
-            return e.error_message, e.response_code
+            return e
 
         return response
 
@@ -115,11 +117,10 @@ class AuthHandler:
         self.session_interface.save_session(self.config_object, session, response)
         return response
 
-    def clean_session(self, request, auth_uri):
-        response = redirect(auth_uri)
+    def clean_session(self, request, response):
         local_session = self.session_interface.open_session(self.config_object, request)
         local_session.clear()
-        self.session_interface.save_session(self.config_object, local_session, response=response)
+        self.session_interface.save_session(self.config_object, local_session, response)
         return response
 
     def logout(self, response=None):
@@ -167,14 +168,14 @@ class AuthMiddleWare:
             return self.app(environ, start_response)
         # Check token validity, especially token expiring
         if not self.auth_handler.is_token_valid(request):
-            response = self.auth_handler.clean_session(request, self.get_auth_uri(state, environ))
+            response = redirect(self.get_auth_uri(state, environ))
+            response = self.auth_handler.clean_session(request, response)
             return response(environ, start_response)
         # Check session state validity
         if self.auth_handler.state_control and not self.auth_handler.is_state_valid(request):
-            # TODO: Maybe return Response("Invalid state", status=400)?
-            response = self.auth_handler.clean_session(request, self.get_auth_uri(state, environ))
+            response = Response("Invalid state", 400)
+            response = self.auth_handler.clean_session(request, response)
             return response(environ, start_response)
-            # return Response("Invalid state", start_response)
         # If we are logged in, just proceed.
         if self.auth_handler.is_logged_in(request):
             return self.app(environ, start_response)
@@ -190,13 +191,19 @@ class AuthMiddleWare:
                 code=request.args.get("code", "unknown"),
                 redirect_uri=self.get_callback_uri(environ))
             response = self.auth_handler.login(request, redirect(self.get_redirect_uri(environ)), **kwargs)
+            if isinstance(response, KeycloakError):
+                # if response is error, will redirect to the login page
+                response = redirect(self.get_auth_uri(state, environ))
+                response = self.auth_handler.clean_session(request, response)
+                return response(environ, start_response)
         # If unauthorized, redirect to login page.
         if self.callback_path not in request.path:
             if check_match_in_list(self.abort_on_unauthorized, request.path):
                 response = Response("Unauthorized", 401)
             else:
                 response = redirect(self.get_auth_uri(state, environ))
-                response = self.auth_handler.set_session(request, response, state=state)
+                if self.auth_handler.state_control:
+                    response = self.auth_handler.set_session(request, response, state=state)
         # Save the session.
         if response:
             return response(environ, start_response)
@@ -238,6 +245,8 @@ class FlaskKeycloak:
         if login_path:
             @app.route(login_path, methods=["GET", 'POST'])
             def route_login():
+                if session.get('user') is not None:
+                    return redirect(auth_middleware.get_redirect_uri(request.environ))
                 if request.method == 'GET':
                     return ('<form method="post">'
                             '<input type="text" name="username" id="un" title="username" placeholder="username"/>'
@@ -252,19 +261,44 @@ class FlaskKeycloak:
                     credentials = request.json
                 else:
                     return "No username and/or password was specified in request", 400
-                return auth_handler.login(request, redirect(auth_middleware.get_redirect_uri(request.environ)),
-                                          **credentials)
+                response = auth_handler.login(request, redirect(auth_middleware.get_redirect_uri(request.environ)),
+                                              **credentials)
+                if isinstance(response, KeycloakError):
+                    session.clear()
+                    return response.error_message, response.response_code
+                return response
         if heartbeat_path:
             @app.route(heartbeat_path, methods=['GET'])
             def route_heartbeat_path():
                 return "Chuck Norris can kill two stones with one bird."
 
     @staticmethod
-    def build(app, redirect_uri=None, config_path=None, config_data: Union[str, dict] = None,
-              logout_path=None, heartbeat_path=None,
-              keycloak_kwargs=None, authorization_settings=None, uri_whitelist=None, login_path=None,
-              prefix_callback_path='', abort_on_unauthorized=None, debug_user=None,
-              debug_roles=None, ssl_context=None, state_control=True):
+    def build(app: Flask, redirect_uri: str = None, config_path: Union[str, os.PathLike] = None,
+              config_data: Union[str, dict] = None,
+              logout_path: str = None, heartbeat_path: str = None,
+              authorization_settings_path: str = None, uri_whitelist: List[str] = None, login_path: str = None,
+              prefix_callback_path: str = '', abort_on_unauthorized: List[str] = None, debug_user=None,
+              debug_roles: str = None, ssl_context: ssl.SSLContext = None, state_control: bool = True):
+        """
+        Build FlaskKeycloak class instance
+
+        :param app: Flask app instance
+        :param redirect_uri: target url of the app
+        :param config_path: path to the keycloak.json file
+        :param config_data: keycloak parameters for KeycloakOpenID
+        :param logout_path: logout path
+        :param heartbeat_path: heartbeat_path
+        :param authorization_settings_path: keycloak authorization settings
+        :param uri_whitelist: uri which
+        :param login_path: login path
+        :param prefix_callback_path: prefix callback path
+        :param abort_on_unauthorized: List of url which will abort anyway and redirect to login page
+        :param debug_user: username for debug
+        :param debug_roles: user roles for debug
+        :param ssl_context: custom ssl context for PyJWK client
+        :param state_control: if True, will control state parameter in keycloak redirect uri and in session's cookie
+        :return: FlaskKeycloak class instance
+        """
         try:
             # The oidc json is either read from a file with 'config_path' or is directly passed as 'config_data'
             if not config_data:
@@ -275,12 +309,9 @@ class FlaskKeycloak:
             else:
                 if isinstance(config_data, str):
                     config_data = json.load(config_data)
-            keycloak_config = config_data
-            if keycloak_kwargs is not None:
-                keycloak_config = {**keycloak_config, **keycloak_kwargs}
-            keycloak_openid = KeycloakOpenID(**keycloak_config)
-            if authorization_settings is not None:
-                keycloak_openid.load_authorization_config(authorization_settings)
+            keycloak_openid = KeycloakOpenID(**config_data)
+            if authorization_settings_path is not None:
+                keycloak_openid.load_authorization_config(authorization_settings_path)
         except FileNotFoundError as ex:
             before_login = _setup_debug_session(debug_user, debug_roles)
             # If there is not debug user and no keycloak, raise the exception.

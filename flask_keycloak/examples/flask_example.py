@@ -13,7 +13,6 @@ REALM_NAME = 'dev'
 CLIENT_SECRET_KEY = '2oh5SxbEnMVLeF7c95xfzkGw3wYYMGvJ'
 KEYCLOAK_PYTHON_CERT = False
 
-
 conf = dict(server_url=KEYCLOAK_HOST,
             client_id=CLIENT_ID,
             realm_name=REALM_NAME,
@@ -29,6 +28,7 @@ FlaskKeycloak.build(
 
 @server.route("/")
 def root_route():
+    # Add "logout" button with "redirect_uri/logout" url to the page
     user = session["user"]
     data = session["data"]
     return "Hello {} - calling from {} \n{}".format(user, g.external_url, data)

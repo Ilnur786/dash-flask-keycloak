@@ -26,13 +26,13 @@ FlaskKeycloak.build(
     server,
     config_data=conf,
     redirect_uri=f"http://127.0.0.1:{APP_PORT}",
+    # login_path="/login"
 )
 
 # Setup dash app.
 app = Dash(
     __name__,
     server=server,
-    # url_base_pathname=f"/"
 )
 
 app.layout = html.Div(
@@ -53,7 +53,7 @@ app.layout = html.Div(
 @app.callback(
     Output('greeting', 'children'),
     [Input('main', 'children')])
-def update_greeting(input_value):
+def update_greeting(_):
     user = session["user"]
     data = session["data"]
     return "Hello {} - calling from {} \n{}".format(user, g.external_url, data)
