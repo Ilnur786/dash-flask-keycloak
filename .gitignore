@@ -1,9 +1,7 @@
 venv/*
 .idea/*
-*keycloak.json*
 dash_keycloak.egg-info/*
 dist/
 *__pycache__*
-.vscode/*
-# this one is for testing
-app.py
+# pypi credentials
+.pypirc
