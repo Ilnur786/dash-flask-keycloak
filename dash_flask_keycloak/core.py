@@ -160,6 +160,7 @@ class AuthMiddleWare:
             return f"{scheme}://{host}"
 
     def __call__(self, environ, start_response):
+
         response = None
         request = Request(environ)
         state = uuid4().hex

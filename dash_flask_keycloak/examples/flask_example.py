@@ -1,19 +1,16 @@
-from dash import dcc, html, Dash
-from dash.dependencies import Input, Output
 from flask import Flask, session, g
 
 # local imports
-from flask_keycloak import FlaskKeycloak
+from dash_flask_keycloak import FlaskKeycloak
 
 # Setup server.
 server = Flask(__name__)
-
 KEYCLOAK_HOST = 'http://127.0.0.1:5555'
 APP_HOST = "http://127.0.0.1"
 APP_PORT = 5007
 CLIENT_ID = 'keycloak_clients'
 REALM_NAME = 'dev'
-CLIENT_SECRET_KEY = 'vlRBHhqzuqkWPiJisAj8zlFVJNVijWsj'
+CLIENT_SECRET_KEY = '2oh5SxbEnMVLeF7c95xfzkGw3wYYMGvJ'
 KEYCLOAK_PYTHON_CERT = False
 
 conf = dict(server_url=KEYCLOAK_HOST,
@@ -26,38 +23,16 @@ FlaskKeycloak.build(
     server,
     config_data=conf,
     redirect_uri=f"http://127.0.0.1:{APP_PORT}",
-    # login_path="/login"
-)
-
-# Setup dash app.
-app = Dash(
-    __name__,
-    server=server,
-)
-
-app.layout = html.Div(
-    id="main",
-    children=[
-        html.Div(id="greeting"),
-        dcc.Link(
-            html.Button('Logout',
-                        id='logout_button',
-                        n_clicks=0),
-            href="/logout",
-            refresh=True
-        )
-    ]
 )
 
 
-@app.callback(
-    Output('greeting', 'children'),
-    [Input('main', 'children')])
-def update_greeting(_):
+@server.route("/")
+def root_route():
+    # Add "logout" button with "redirect_uri/logout" url to the page
     user = session["user"]
     data = session["data"]
     return "Hello {} - calling from {} \n{}".format(user, g.external_url, data)
 
 
 if __name__ == '__main__':
-    app.run_server(port=APP_PORT)
+    server.run(port=5007)
