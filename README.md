@@ -8,6 +8,8 @@ Prior to using this library, a Keycloak server must be setup. Please refer to th
 
 After setting up the server, create a realm and a client for the application.
 
+In the clients settings, write redirect URI as "your_app_url/keycloak/callback" .
+
 #### Installation
 
     pip install dash-flask-keycloak
