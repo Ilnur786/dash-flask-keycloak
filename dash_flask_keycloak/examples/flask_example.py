@@ -35,4 +35,4 @@ def root_route():
 
 
 if __name__ == '__main__':
-    server.run(port=5007)
+    server.run(port=APP_PORT)
