@@ -216,7 +216,7 @@ class FlaskKeycloak:
     def __init__(self, app, keycloak_openid, redirect_uri=None, uri_whitelist=None, logout_path=None,
                  heartbeat_path=None,
                  login_path=None, prefix_callback_path=None,
-                 abort_on_unauthorized=None, before_login=None, ssl_context=None, state_control=False):
+                 abort_on_unauthorized=None, before_login=None, ssl_context=None, state_control=True):
         logout_path = '/logout' if logout_path is None else logout_path
         uri_whitelist = [] if uri_whitelist is None else uri_whitelist
         if heartbeat_path is not None:
