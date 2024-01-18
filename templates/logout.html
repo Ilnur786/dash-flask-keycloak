@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta name="viewport" content="width=device-width" charset="UTF-8"/>
+    <title>Processing</title>
+    <script type="text/javascript">
+        function post() {
+            document.logout_form.submit();
+        }
+    </script>
+</head>
+<body onLoad="post()">
+    <p>Processing logout...</p>
+    <form name="logout_form" method="post" action="{{ data['logout_endpoint'] }}">
+        <input type="hidden" id="refresh_token" name="refresh_token" value="{{ data['refresh_token'] }}"/>
+        <input type="hidden" id="client_id" name="client_id" value="{{ data['client_id'] }}"/>
+        <input type="hidden" id="client_secret" name="client_secret" value="{{ data['client_secret'] }}"/>
+        <noscript>
+            <center>Please click Submit to continue logout.<br>
+                <input type="submit" name="submit" value="Submit"/>
+            </center>
+        </noscript>
+    </form>
+</body>
+</html>

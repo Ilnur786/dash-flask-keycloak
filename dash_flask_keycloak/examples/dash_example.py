@@ -28,7 +28,7 @@ FlaskKeycloak.build(
     server,
     config_data=conf,
     redirect_uri=f"http://127.0.0.1:{APP_PORT}",
-    session_lifetime=timedelta(minutes=1),
+    session_lifetime=timedelta(seconds=10),
     # login_path="/login"
 )
 
