@@ -9,7 +9,7 @@ from typing import Union, List
 from uuid import uuid4
 
 import jwt
-from flask import Flask, redirect, session, request, Response, g
+from flask import Flask, redirect, session, request, Response, g, render_template, url_for, jsonify
 from jwt import PyJWKClient
 from keycloak.exceptions import KeycloakConnectionError, KeycloakAuthenticationError, KeycloakPostError, \
     KeycloakGetError, KeycloakError
@@ -122,15 +122,26 @@ class AuthHandler:
         self.session_interface.save_session(self.config_object, local_session, response)
         return response
 
-    def logout(self, response=None):
-        try:
-            # requests.get("http://127.0.0.1:{}/realms/{}/protocol/openid-connect/logout".format(5555, "dev"))
-            # url = "http://127.0.0.1:{}/realms/{}/protocol/openid-connect/logout?refresh_token={}&client_id={}".format(5555, "dev", session["token"]["refresh_token"], "keycloak_clients")
-            # response = redirect(url)
-            self.keycloak_openid.logout(session["token"]["refresh_token"])
-        except KeyError:
-            pass
-        session.clear()
+    def logout(self, request, response=None):
+        response = render_template("logout.html",
+                                   data={
+                                       "logout_endpoint": "http://127.0.0.1:{}/realms/dev/protocol/openid-connect/logout",
+                                       "refresh_token": session["token"]["refresh_token"],
+                                       "client_id": self.keycloak_openid.client_id}
+                                   )
+        # response = redirect(jsonify(response), code=307)
+        response = redirect(url_for("finish"), code=307)
+        # try:
+        #     # requests.get("http://127.0.0.1:{}/realms/{}/protocol/openid-connect/logout".format(5555, "dev"))
+        #     # url = "http://127.0.0.1:{}/realms/{}/protocol/openid-connect/logout?refresh_token={}&client_id={}".format(5555, "dev", session["token"]["refresh_token"], "keycloak_clients")
+        #     # url = "http://127.0.0.1:{}/realms/{}/protocol/openid-connect/logout?redirect_uri={}".format(5555, "dev", self.keycloak_openid.client_id)
+        #     response = Response(render_template("logout.html", data={"logout_endpoint": "http://127.0.0.1:{}/realms/dev/protocol/openid-connect/logout", "refresh_token": session["token"]["refresh_token"], "client_id": self.keycloak_openid.client_id}))
+        #     a = 10
+        #     # response = redirect(response, code=307)
+        #     # self.keycloak_openid.logout(session["token"]["refresh_token"])
+        # except KeyError:
+        #     pass
+        # session.clear()
         return response
 
 
@@ -175,7 +186,8 @@ class AuthMiddleWare:
             return self.app(environ, start_response)
         # Check token validity, especially token expiring
         if not self.auth_handler.is_token_valid(glob_session):
-            response = redirect(self.get_auth_uri(state, environ))
+            # response = redirect(self.get_auth_uri(state, environ))
+            response = redirect(self.get_redirect_uri(state))
             response = self.auth_handler.clean_session(glob_session, response)
             return response(environ, start_response)
         # Check session state validity
@@ -200,7 +212,8 @@ class AuthMiddleWare:
             response = self.auth_handler.login(glob_session, redirect(self.get_redirect_uri(environ)), **kwargs)
             if isinstance(response, KeycloakError):
                 # if response is error, will redirect to the login page
-                response = redirect(self.get_auth_uri(state, environ))
+                # response = redirect(self.get_auth_uri(state, environ))
+                response = redirect(self.get_redirect_uri(state))
                 response = self.auth_handler.clean_session(glob_session, response)
                 return response(environ, start_response)
         # If unauthorized, redirect to login page.
@@ -209,6 +222,7 @@ class AuthMiddleWare:
                 response = Response("Unauthorized", 401)
             else:
                 response = redirect(self.get_auth_uri(state, environ))
+                response.headers.add('Access-Control-Allow-Origin', '*')
                 if self.auth_handler.state_control:
                     response = self.auth_handler.set_session(glob_session, response, state=state)
         # Save the session.
@@ -249,11 +263,21 @@ class FlaskKeycloak:
         app.before_request(_save_external_url)
         app.wsgi_app = auth_middleware
 
+        @app.route("/finish")
+        def finish():
+            data = {
+                "logout_endpoint": "http://127.0.0.1:5555/realms/dev/protocol/openid-connect/logout",
+                "refresh_token": session["token"]["refresh_token"],
+                "client_secret": keycloak_openid._client_secret_key,
+                "client_id": keycloak_openid.client_id
+            }
+            return render_template("logout.html", data=data)
+
         # Add logout mechanism.
         if logout_path:
             @app.route(logout_path, methods=["GET", 'POST'])
             def route_logout():
-                return auth_handler.logout(redirect(auth_middleware.get_redirect_uri(request.environ)))
+                return auth_handler.logout(redirect(auth_middleware.get_redirect_uri(request.environ)), request)
         if login_path:
             @app.route(login_path, methods=["GET", 'POST'])
             def route_login():
