@@ -16,12 +16,12 @@ In the clients settings, write redirect URI as "your_app_url/keycloak/callback" 
 
 ### Motivation
 
-The original project was abandoned and doesn't work with keyloack higher than 17.0 version.
+The original project was abandoned and doesn't work with Keyloack higher than 17.0 version.
 
 Also were added:
 *     Session state control
 *     Access token validation
-*     Session lifespan (It's recommended to set "session_lifetime" in app and SSO Session Idle, SSO Session Max in keyloak realm settings to the same value)
+*     Session lifetime (It's recommended to set "session_lifetime" in app less or equal to a minimal value among SSO Session Idle, SSO Session Max in Keyloak realm settings)
 
 
 **You can find examples in dash-flask-keycloak/examples**
