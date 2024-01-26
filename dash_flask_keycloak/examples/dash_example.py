@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from dash import dcc, html, Dash
 from dash.dependencies import Input, Output
 from flask import Flask, session, g
@@ -26,6 +28,7 @@ FlaskKeycloak.build(
     server,
     config_data=conf,
     redirect_uri=f"http://127.0.0.1:{APP_PORT}",
+    session_lifetime=timedelta(hours=12),
     # login_path="/login"
 )
 

@@ -1,16 +1,13 @@
 import pathlib
 from setuptools import setup, find_packages
 
-# The directory containing this file
 HERE = pathlib.Path(__file__).parent
 
-# The text of the README file
 README = (HERE / "README.md").read_text()
 
-# This call to setup() does all the work
 setup(
     name="dash-flask-keycloak",
-    version="1.0.0",
+    version="1.1.0",
     description="Extension providing Keycloak integration via the python-keycloak package to the Dash/Flask app",
     long_description=README,
     long_description_content_type="text/markdown",
@@ -25,6 +22,6 @@ setup(
     # packages=["flask_keycloak", "flask_keycloak.examples"],
     python_requires='>=3.8',
     # include_package_data=True,
-    install_requires=["flask>=3.0.0", "dash>=2.14.2", "PyJWT[crypto]>=2.8.0", "python-keycloak>=3.7.0"],
+    install_requires=["flask>=3.0.0", "PyJWT[crypto]>=2.0.0", "python-keycloak>=3.0.0"],
     keywords='python, dash, flask, keycloak, pyjwt',
 )
