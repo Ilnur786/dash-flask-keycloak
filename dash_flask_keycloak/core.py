@@ -1,3 +1,4 @@
+from datetime import timedelta
 import json
 import os
 import re
@@ -30,7 +31,7 @@ def check_match_in_list(patterns, to_check):
 
 
 class AuthHandler:
-    def __init__(self, app, config, session_interface, keycloak_openid, ssl_context, state_control):
+    def __init__(self, app, config, session_interface, keycloak_openid, ssl_context, state_control, session_lifetime):
         self.app = app
         self.config = config
         self.session_interface = session_interface
@@ -39,10 +40,10 @@ class AuthHandler:
         self.config_object = Objectify(config=config, **config)
         self.ssl_context = ssl_context
         self.state_control = state_control
+        self.session_lifetime = session_lifetime
         self.well_known_metadata = self.keycloak_openid.well_known()
 
-    def is_token_valid(self, request):
-        local_session = self.session_interface.open_session(self.config_object, request)
+    def is_token_valid(self, local_session):
         token = local_session.get("token", None)
         if token is not None:
             # JWT Decode
@@ -55,8 +56,10 @@ class AuthHandler:
                     algorithms=self.well_known_metadata["id_token_signing_alg_values_supported"],
                     audience=self.keycloak_openid.client_id,
                 )
-            except jwt.InvalidTokenError:
+            except jwt.DecodeError:
                 return False
+            except jwt.ExpiredSignatureError:
+                pass
             # TODO: Should be tested
             # else:
             #     # TODO: What if this condition doesn't pass?
@@ -64,8 +67,7 @@ class AuthHandler:
             #         return True
         return True
 
-    def is_state_valid(self, request):
-        local_session = self.session_interface.open_session(self.config_object, request)
+    def is_state_valid(self, local_session, request):
         session_state = local_session.get("state", None)
         request_state = request.args.get("state")
         if session_state is not None and request_state is not None:
@@ -73,8 +75,8 @@ class AuthHandler:
                 return False
         return True
 
-    def is_logged_in(self, request):
-        return "token" in self.session_interface.open_session(self.config_object, request)
+    def is_logged_in(self, local_session):
+        return "token" in local_session
 
     def auth_url(self, state, callback_uri):
         if self.state_control:
@@ -83,7 +85,7 @@ class AuthHandler:
             auth_url = self.keycloak_openid.auth_url(redirect_uri=callback_uri, scope="openid", state="")
         return auth_url
 
-    def login(self, request, response, **kwargs):
+    def login(self, local_session, response, **kwargs):
         try:
             # Get access token from Keycloak.
             try:
@@ -104,27 +106,31 @@ class AuthHandler:
             user = self.keycloak_openid.userinfo(token['access_token'])
             # introspect = self.keycloak_openid.introspect(token['access_token'])
             # Bind info to the session.
-            response = self.set_session(request, response, token=token, data=data, user=user)
+            response = self.set_session(local_session, response, token=token, data=data, user=user)
         except KeycloakAuthenticationError as e:
             return e
 
         return response
 
-    def set_session(self, request, response, **kwargs):
-        session = self.session_interface.open_session(self.config_object, request)
+    def set_session(self, local_session, response, **kwargs):
         for kw in kwargs:
-            session[kw] = kwargs[kw]
-        self.session_interface.save_session(self.config_object, session, response)
+            local_session[kw] = kwargs[kw]
+        self.session_interface.save_session(self.config_object, local_session, response)
         return response
 
-    def clean_session(self, request, response):
-        local_session = self.session_interface.open_session(self.config_object, request)
+    def clean_session(self, local_session, response):
         local_session.clear()
         self.session_interface.save_session(self.config_object, local_session, response)
         return response
 
     def logout(self, response=None):
-        self.keycloak_openid.logout(session["token"]["refresh_token"])
+        try:
+            # requests.get("http://127.0.0.1:{}/realms/{}/protocol/openid-connect/logout".format(5555, "dev"))
+            # url = "http://127.0.0.1:{}/realms/{}/protocol/openid-connect/logout?refresh_token={}&client_id={}".format(5555, "dev", session["token"]["refresh_token"], "keycloak_clients")
+            # response = redirect(url)
+            self.keycloak_openid.logout(session["token"]["refresh_token"])
+        except KeyError:
+            pass
         session.clear()
         return response
 
@@ -160,25 +166,26 @@ class AuthMiddleWare:
             return f"{scheme}://{host}"
 
     def __call__(self, environ, start_response):
-
         response = None
         request = Request(environ)
+        glob_session = self.auth_handler.session_interface.open_session(self.auth_handler.config_object, request)
+        glob_session.permanent = True if self.auth_handler.session_lifetime is not None else False
         state = uuid4().hex
         # If the uri has been whitelisted, just proceed.
         if check_match_in_list(self.uri_whitelist, request.path):
             return self.app(environ, start_response)
         # Check token validity, especially token expiring
-        if not self.auth_handler.is_token_valid(request):
+        if not self.auth_handler.is_token_valid(glob_session):
             response = redirect(self.get_auth_uri(state, environ))
-            response = self.auth_handler.clean_session(request, response)
+            response = self.auth_handler.clean_session(glob_session, response)
             return response(environ, start_response)
         # Check session state validity
-        if self.auth_handler.state_control and not self.auth_handler.is_state_valid(request):
+        if self.auth_handler.state_control and not self.auth_handler.is_state_valid(glob_session, request):
             response = Response("Invalid state", 400)
-            response = self.auth_handler.clean_session(request, response)
+            response = self.auth_handler.clean_session(glob_session, response)
             return response(environ, start_response)
         # If we are logged in, just proceed.
-        if self.auth_handler.is_logged_in(request):
+        if self.auth_handler.is_logged_in(glob_session):
             return self.app(environ, start_response)
         # Before login hook.
         if self.before_login:
@@ -191,11 +198,11 @@ class AuthMiddleWare:
                 grant_type="authorization_code",
                 code=request.args.get("code", "unknown"),
                 redirect_uri=self.get_callback_uri(environ))
-            response = self.auth_handler.login(request, redirect(self.get_redirect_uri(environ)), **kwargs)
+            response = self.auth_handler.login(glob_session, redirect(self.get_redirect_uri(environ)), **kwargs)
             if isinstance(response, KeycloakError):
                 # if response is error, will redirect to the login page
                 response = redirect(self.get_auth_uri(state, environ))
-                response = self.auth_handler.clean_session(request, response)
+                response = self.auth_handler.clean_session(glob_session, response)
                 return response(environ, start_response)
         # If unauthorized, redirect to login page.
         if self.callback_path not in request.path:
@@ -204,7 +211,7 @@ class AuthMiddleWare:
             else:
                 response = redirect(self.get_auth_uri(state, environ))
                 if self.auth_handler.state_control:
-                    response = self.auth_handler.set_session(request, response, state=state)
+                    response = self.auth_handler.set_session(glob_session, response, state=state)
         # Save the session.
         if response:
             return response(environ, start_response)
@@ -216,9 +223,11 @@ class FlaskKeycloak:
     def __init__(self, app, keycloak_openid, redirect_uri=None, uri_whitelist=None, logout_path=None,
                  heartbeat_path=None,
                  login_path=None, prefix_callback_path=None,
-                 abort_on_unauthorized=None, before_login=None, ssl_context=None, state_control=False):
+                 abort_on_unauthorized=None, before_login=None, ssl_context=None, state_control=True,
+                 session_lifetime=None):
         logout_path = '/logout' if logout_path is None else logout_path
         uri_whitelist = [] if uri_whitelist is None else uri_whitelist
+        # uri_whitelist = uri_whitelist + [logout_path]
         if heartbeat_path is not None:
             uri_whitelist = uri_whitelist + [heartbeat_path]
         if login_path is not None:
@@ -226,9 +235,12 @@ class FlaskKeycloak:
         # Bind secret key.
         if keycloak_openid._client_secret_key is not None:
             app.config['SECRET_KEY'] = keycloak_openid._client_secret_key
+            if session_lifetime is not None:
+                app.config['PERMANENT_SESSION_LIFETIME'] = session_lifetime
+                # app.permanent_session_lifetime = session_lifetime
         # Add middleware.
         auth_handler = AuthHandler(app.wsgi_app, app.config, app.session_interface, keycloak_openid, ssl_context,
-                                   state_control)
+                                   state_control, session_lifetime)
         auth_middleware = AuthMiddleWare(app.wsgi_app, auth_handler, redirect_uri, uri_whitelist,
                                          prefix_callback_path, abort_on_unauthorized, before_login)
 
@@ -262,7 +274,7 @@ class FlaskKeycloak:
                     credentials = request.json
                 else:
                     return "No username and/or password was specified in request", 400
-                response = auth_handler.login(request, redirect(auth_middleware.get_redirect_uri(request.environ)),
+                response = auth_handler.login(session, redirect(auth_middleware.get_redirect_uri(request.environ)),
                                               **credentials)
                 if isinstance(response, KeycloakError):
                     session.clear()
@@ -279,7 +291,8 @@ class FlaskKeycloak:
               logout_path: str = None, heartbeat_path: str = None,
               authorization_settings_path: str = None, uri_whitelist: List[str] = None, login_path: str = None,
               prefix_callback_path: str = '', abort_on_unauthorized: List[str] = None, debug_user=None,
-              debug_roles: str = None, ssl_context: ssl.SSLContext = None, state_control: bool = True):
+              debug_roles: str = None, ssl_context: ssl.SSLContext = None, state_control: bool = True,
+              session_lifetime: Union[int, timedelta] = None):
         """
         Build FlaskKeycloak class instance
 
@@ -298,6 +311,8 @@ class FlaskKeycloak:
         :param debug_roles: user roles for debug
         :param ssl_context: custom ssl context for PyJWK client
         :param state_control: if True, will control state parameter in keycloak redirect uri and in session's cookie
+        :param session_lifetime: if isn't None, session will has lifespan.
+            Should be a datetime.timedelta object or count of seconds (int).
         :return: FlaskKeycloak class instance
         """
         try:
@@ -325,7 +340,7 @@ class FlaskKeycloak:
                              prefix_callback_path=prefix_callback_path,
                              abort_on_unauthorized=abort_on_unauthorized,
                              before_login=_setup_debug_session(debug_user, debug_roles), ssl_context=ssl_context,
-                             state_control=state_control)
+                             state_control=state_control, session_lifetime=session_lifetime)
 
     @staticmethod
     def try_build(app, **kwargs):
