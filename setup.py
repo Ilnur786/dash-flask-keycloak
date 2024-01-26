@@ -25,6 +25,6 @@ setup(
     # packages=["flask_keycloak", "flask_keycloak.examples"],
     python_requires='>=3.8',
     # include_package_data=True,
-    install_requires=["flask>=3.0.0", "dash>=2.14.2", "PyJWT[crypto]>=2.8.0", "python-keycloak>=3.7.0"],
+    install_requires=["flask>=3.0.0", "PyJWT[crypto]>=2.0.0", "python-keycloak>=3.0.0"],
     keywords='python, dash, flask, keycloak, pyjwt',
 )
