@@ -1,4 +1,3 @@
-import datetime
 from datetime import timedelta
 import json
 import os
@@ -59,6 +58,8 @@ class AuthHandler:
                 )
             except jwt.DecodeError:
                 return False
+            except jwt.ExpiredSignatureError:
+                pass
             # TODO: Should be tested
             # else:
             #     # TODO: What if this condition doesn't pass?
@@ -226,7 +227,7 @@ class FlaskKeycloak:
                  session_lifetime=None):
         logout_path = '/logout' if logout_path is None else logout_path
         uri_whitelist = [] if uri_whitelist is None else uri_whitelist
-        uri_whitelist = uri_whitelist + [logout_path]
+        # uri_whitelist = uri_whitelist + [logout_path]
         if heartbeat_path is not None:
             uri_whitelist = uri_whitelist + [heartbeat_path]
         if login_path is not None:
@@ -273,7 +274,7 @@ class FlaskKeycloak:
                     credentials = request.json
                 else:
                     return "No username and/or password was specified in request", 400
-                response = auth_handler.login(request, redirect(auth_middleware.get_redirect_uri(request.environ)),
+                response = auth_handler.login(session, redirect(auth_middleware.get_redirect_uri(request.environ)),
                                               **credentials)
                 if isinstance(response, KeycloakError):
                     session.clear()
