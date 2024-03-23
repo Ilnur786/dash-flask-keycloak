@@ -165,6 +165,12 @@ class AuthMiddleWare:
             host = environ.get("HTTP_X_FORWARDED_SERVER", environ.get("HTTP_HOST"))
             return f"{scheme}://{host}"
 
+    def response_for_dash(self, state, environ):
+        return Response(json.dumps({"multi": True, "response": {"url": {"pathname": "/login"}}}),
+            200,
+            {'Content-Type': 'application/json'},
+        )
+
     def __call__(self, environ, start_response):
         response = None
         request = Request(environ)
@@ -176,7 +182,8 @@ class AuthMiddleWare:
             return self.app(environ, start_response)
         # Check token validity, especially token expiring
         if not self.auth_handler.is_token_valid(glob_session):
-            response = redirect(self.get_auth_uri(state, environ))
+            # response = redirect(self.get_auth_uri(state, environ))
+            response = redirect(self.get_auth_uri(state, environ)) if request.path != '/_dash-update-component' else self.response_for_dash(state, environ)
             response = self.auth_handler.clean_session(glob_session, response)
             return response(environ, start_response)
         # Check session state validity
@@ -201,7 +208,10 @@ class AuthMiddleWare:
             response = self.auth_handler.login(glob_session, redirect(self.get_redirect_uri(environ)), **kwargs)
             if isinstance(response, KeycloakError):
                 # if response is error, will redirect to the login page
-                response = redirect(self.get_auth_uri(state, environ))
+                # response = redirect(self.get_auth_uri(state, environ))
+                response = redirect(self.get_auth_uri(state,
+                                                      environ)) if request.path != '/_dash-update-component' else self.response_for_dash(
+                    state, environ)
                 response = self.auth_handler.clean_session(glob_session, response)
                 return response(environ, start_response)
         # If unauthorized, redirect to login page.
@@ -209,7 +219,10 @@ class AuthMiddleWare:
             if check_match_in_list(self.abort_on_unauthorized, request.path):
                 response = Response("Unauthorized", 401)
             else:
-                response = redirect(self.get_auth_uri(state, environ))
+                # response = redirect(self.get_auth_uri(state, environ))
+                response = redirect(self.get_auth_uri(state,
+                                                      environ)) if request.path != '/_dash-update-component' else self.response_for_dash(
+                    state, environ)
                 if self.auth_handler.state_control:
                     response = self.auth_handler.set_session(glob_session, response, state=state)
         # Save the session.
@@ -249,6 +262,17 @@ class FlaskKeycloak:
 
         app.before_request(_save_external_url)
         app.wsgi_app = auth_middleware
+
+        # @app.before_request
+        # def before_request_func():
+        #     # Check if the user is logged in
+        #     if not 'user' in session and request.path != "/login":
+        #         # Check the request path and method
+        #         if request.path == "/_dash-update-component" and request.method == "POST":
+        #             # If the user is not logged in, return a JSON response to redirect to /login
+        #             return jsonify({"multi": True, "response": {"url": {"pathname": "/login"}}})
+        #         else:
+        #             return redirect("/login")
 
         # Add logout mechanism.
         if logout_path:
@@ -311,7 +335,7 @@ class FlaskKeycloak:
         :param debug_roles: user roles for debug
         :param ssl_context: custom ssl context for PyJWK client
         :param state_control: if True, will control state parameter in keycloak redirect uri and in session's cookie
-        :param session_lifetime: if isn't None, session will has lifespan.
+        :param session_lifetime: if isn't None, session will include lifespan.
             Should be a datetime.timedelta object or count of seconds (int).
         :return: FlaskKeycloak class instance
         """
