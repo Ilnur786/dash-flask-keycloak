@@ -2,13 +2,10 @@ from datetime import timedelta
 
 from dash import dcc, html, Dash
 from dash.dependencies import Input, Output
-from flask import Flask, session, g
+from flask import session, g
 
 # local imports
 from dash_flask_keycloak import FlaskKeycloak
-
-# Setup server.
-server = Flask(__name__)
 
 KEYCLOAK_HOST = 'http://127.0.0.1:5555'
 APP_HOST = "http://127.0.0.1"
@@ -24,19 +21,9 @@ conf = dict(server_url=KEYCLOAK_HOST,
             client_secret_key=CLIENT_SECRET_KEY,
             verify=KEYCLOAK_PYTHON_CERT)
 
-FlaskKeycloak.build(
-    server,
-    config_data=conf,
-    redirect_uri=f"http://127.0.0.1:{APP_PORT}",
-    session_lifetime=timedelta(hours=12),
-    # login_path="/login"
-)
 
 # Setup dash app.
-app = Dash(
-    __name__,
-    server=server,
-)
+app = Dash(__name__)
 
 app.layout = html.Div(
     id="main",
@@ -52,6 +39,15 @@ app.layout = html.Div(
     ]
 )
 
+# Should be after layout setup
+FlaskKeycloak.build(
+    app,
+    config_data=conf,
+    redirect_uri=f"http://127.0.0.1:{APP_PORT}",
+    session_lifetime=timedelta(hours=12),
+    # login_path="/login"
+)
+
 
 @app.callback(
     Output('greeting', 'children'),
@@ -59,7 +55,8 @@ app.layout = html.Div(
 def update_greeting(_):
     user = session["user"]
     data = session["data"]
-    return "Hello {} - calling from {} \n{}".format(user, g.external_url, data)
+    return (html.Div(f'Hello {user} - calling from {g.external_url}'),
+            html.Div(f"{data}"))
 
 
 if __name__ == '__main__':
