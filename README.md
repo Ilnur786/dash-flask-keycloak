@@ -1,4 +1,4 @@
-This purpose of this library is to provide seamless integration of Plotly Dash or Flask with keycloak via the python-keycloak package.
+This purpose of this library is to provide seamless integration of Plotly Dash or Flask with Keycloak via the dash-flask-keycloak package.
 
 ### Prerequisites
 
@@ -24,6 +24,6 @@ Also were added:
 *     Session lifetime (It's recommended to set "session_lifetime" in app less or equal to a minimal value among SSO Session Idle, SSO Session Max in Keyloak realm settings)
 
 
-**You can find examples in dash-flask-keycloak/examples**
+## **You can find examples in dash-flask-keycloak/examples**
 
 (Was developed and tested on Ubuntu 20.04, Python 3.8.10 and Keycloak 21.1.1)
