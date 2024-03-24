@@ -39,7 +39,7 @@ app.layout = html.Div(
     ]
 )
 
-
+# Should be after layout setup
 FlaskKeycloak.build(
     app,
     config_data=conf,
