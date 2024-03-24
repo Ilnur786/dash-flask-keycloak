@@ -1,10 +1,11 @@
+from __future__ import annotations
 from datetime import timedelta
 import json
 import os
 import re
 import ssl
 import urllib.parse
-from typing import Union, List
+from typing import Union, List, TYPE_CHECKING
 from uuid import uuid4
 
 import jwt
@@ -14,6 +15,9 @@ from keycloak.exceptions import KeycloakConnectionError, KeycloakAuthenticationE
     KeycloakGetError, KeycloakError
 from keycloak.keycloak_openid import KeycloakOpenID
 from werkzeug.wrappers import Request
+
+if TYPE_CHECKING:
+    from dash import Dash
 
 
 class Objectify(object):
@@ -125,9 +129,6 @@ class AuthHandler:
 
     def logout(self, response=None):
         try:
-            # requests.get("http://127.0.0.1:{}/realms/{}/protocol/openid-connect/logout".format(5555, "dev"))
-            # url = "http://127.0.0.1:{}/realms/{}/protocol/openid-connect/logout?refresh_token={}&client_id={}".format(5555, "dev", session["token"]["refresh_token"], "keycloak_clients")
-            # response = redirect(url)
             self.keycloak_openid.logout(session["token"]["refresh_token"])
         except KeyError:
             pass
@@ -165,11 +166,10 @@ class AuthMiddleWare:
             host = environ.get("HTTP_X_FORWARDED_SERVER", environ.get("HTTP_HOST"))
             return f"{scheme}://{host}"
 
-    def response_for_dash(self, state, environ):
-        return Response(json.dumps({"multi": True, "response": {"url": {"pathname": "/login"}}}),
-            200,
-            {'Content-Type': 'application/json'},
-        )
+    def redirect_to_login_page(self, state, environ, path):
+        if path != '/_dash-update-component':
+            return redirect(self.get_auth_uri(state, environ))
+        return Response(json.dumps({"multi": True, "response": {"url": {"pathname": "/login"}}}))
 
     def __call__(self, environ, start_response):
         response = None
@@ -183,7 +183,7 @@ class AuthMiddleWare:
         # Check token validity, especially token expiring
         if not self.auth_handler.is_token_valid(glob_session):
             # response = redirect(self.get_auth_uri(state, environ))
-            response = redirect(self.get_auth_uri(state, environ)) if request.path != '/_dash-update-component' else self.response_for_dash(state, environ)
+            response = self.redirect_to_login_page(state, environ, request.path)
             response = self.auth_handler.clean_session(glob_session, response)
             return response(environ, start_response)
         # Check session state validity
@@ -209,9 +209,7 @@ class AuthMiddleWare:
             if isinstance(response, KeycloakError):
                 # if response is error, will redirect to the login page
                 # response = redirect(self.get_auth_uri(state, environ))
-                response = redirect(self.get_auth_uri(state,
-                                                      environ)) if request.path != '/_dash-update-component' else self.response_for_dash(
-                    state, environ)
+                response = self.redirect_to_login_page(state, environ, request.path)
                 response = self.auth_handler.clean_session(glob_session, response)
                 return response(environ, start_response)
         # If unauthorized, redirect to login page.
@@ -220,9 +218,7 @@ class AuthMiddleWare:
                 response = Response("Unauthorized", 401)
             else:
                 # response = redirect(self.get_auth_uri(state, environ))
-                response = redirect(self.get_auth_uri(state,
-                                                      environ)) if request.path != '/_dash-update-component' else self.response_for_dash(
-                    state, environ)
+                response = self.redirect_to_login_page(state, environ, request.path)
                 if self.auth_handler.state_control:
                     response = self.auth_handler.set_session(glob_session, response, state=state)
         # Save the session.
@@ -238,6 +234,7 @@ class FlaskKeycloak:
                  login_path=None, prefix_callback_path=None,
                  abort_on_unauthorized=None, before_login=None, ssl_context=None, state_control=True,
                  session_lifetime=None):
+        server = app if isinstance(app, Flask) else app.server
         logout_path = '/logout' if logout_path is None else logout_path
         uri_whitelist = [] if uri_whitelist is None else uri_whitelist
         # uri_whitelist = uri_whitelist + [logout_path]
@@ -247,40 +244,37 @@ class FlaskKeycloak:
             uri_whitelist = uri_whitelist + [login_path]
         # Bind secret key.
         if keycloak_openid._client_secret_key is not None:
-            app.config['SECRET_KEY'] = keycloak_openid._client_secret_key
+            server.config['SECRET_KEY'] = keycloak_openid._client_secret_key
             if session_lifetime is not None:
-                app.config['PERMANENT_SESSION_LIFETIME'] = session_lifetime
-                # app.permanent_session_lifetime = session_lifetime
+                server.config['PERMANENT_SESSION_LIFETIME'] = session_lifetime
+                # server.permanent_session_lifetime = session_lifetime
+        # Add dcc.Location to Dash layout (if target app is the Dash app)
+        if type(app).__name__ == 'Dash':
+            try:
+                from dash import dcc
+            except ImportError:
+                raise RuntimeError('Perhaps you did not install Dash package?')
+            app.layout.children.append(dcc.Location(id='url', refresh=True))
         # Add middleware.
-        auth_handler = AuthHandler(app.wsgi_app, app.config, app.session_interface, keycloak_openid, ssl_context,
+        auth_handler = AuthHandler(server.wsgi_app, server.config, server.session_interface, keycloak_openid,
+                                   ssl_context,
                                    state_control, session_lifetime)
-        auth_middleware = AuthMiddleWare(app.wsgi_app, auth_handler, redirect_uri, uri_whitelist,
+        auth_middleware = AuthMiddleWare(server.wsgi_app, auth_handler, redirect_uri, uri_whitelist,
                                          prefix_callback_path, abort_on_unauthorized, before_login)
 
         def _save_external_url():
             g.external_url = auth_middleware.get_redirect_uri(request.environ)
 
-        app.before_request(_save_external_url)
-        app.wsgi_app = auth_middleware
-
-        # @app.before_request
-        # def before_request_func():
-        #     # Check if the user is logged in
-        #     if not 'user' in session and request.path != "/login":
-        #         # Check the request path and method
-        #         if request.path == "/_dash-update-component" and request.method == "POST":
-        #             # If the user is not logged in, return a JSON response to redirect to /login
-        #             return jsonify({"multi": True, "response": {"url": {"pathname": "/login"}}})
-        #         else:
-        #             return redirect("/login")
+        server.before_request(_save_external_url)
+        server.wsgi_app = auth_middleware
 
         # Add logout mechanism.
         if logout_path:
-            @app.route(logout_path, methods=["GET", 'POST'])
+            @server.route(logout_path, methods=["GET", 'POST'])
             def route_logout():
                 return auth_handler.logout(redirect(auth_middleware.get_redirect_uri(request.environ)))
         if login_path:
-            @app.route(login_path, methods=["GET", 'POST'])
+            @server.route(login_path, methods=["GET", 'POST'])
             def route_login():
                 if session.get('user') is not None:
                     return redirect(auth_middleware.get_redirect_uri(request.environ))
@@ -305,12 +299,12 @@ class FlaskKeycloak:
                     return response.error_message, response.response_code
                 return response
         if heartbeat_path:
-            @app.route(heartbeat_path, methods=['GET'])
+            @server.route(heartbeat_path, methods=['GET'])
             def route_heartbeat_path():
                 return "Chuck Norris can kill two stones with one bird."
 
     @staticmethod
-    def build(app: Flask, redirect_uri: str = None, config_path: Union[str, os.PathLike] = None,
+    def build(app: Union[Dash, Flask], redirect_uri: str = None, config_path: Union[str, os.PathLike] = None,
               config_data: Union[str, dict] = None,
               logout_path: str = None, heartbeat_path: str = None,
               authorization_settings_path: str = None, uri_whitelist: List[str] = None, login_path: str = None,
@@ -320,17 +314,17 @@ class FlaskKeycloak:
         """
         Build FlaskKeycloak class instance
 
-        :param app: Flask app instance
+        :param app: if your app is Dash one - put it here. Otherwise, put Flask app.
         :param redirect_uri: target url of the app
         :param config_path: path to the keycloak.json file
         :param config_data: keycloak parameters for KeycloakOpenID
         :param logout_path: logout path
         :param heartbeat_path: heartbeat_path
         :param authorization_settings_path: keycloak authorization settings
-        :param uri_whitelist: uri which
-        :param login_path: login path
+        :param uri_whitelist: uri which will proceed upon authorization
+        :param login_path: if given, this route will proceed upon authorization and credentials can be given as json via post request
         :param prefix_callback_path: prefix callback path
-        :param abort_on_unauthorized: List of url which will abort anyway and redirect to login page
+        :param abort_on_unauthorized: list of url which will abort anyway and redirect to login page
         :param debug_user: username for debug
         :param debug_roles: user roles for debug
         :param ssl_context: custom ssl context for PyJWK client
