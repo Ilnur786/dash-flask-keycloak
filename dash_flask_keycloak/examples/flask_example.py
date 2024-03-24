@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from flask import Flask, session, g
 
 # local imports
@@ -5,6 +7,7 @@ from dash_flask_keycloak import FlaskKeycloak
 
 # Setup server.
 server = Flask(__name__)
+
 KEYCLOAK_HOST = 'http://127.0.0.1:5555'
 APP_HOST = "http://127.0.0.1"
 APP_PORT = 5007
@@ -23,15 +26,17 @@ FlaskKeycloak.build(
     server,
     config_data=conf,
     redirect_uri=f"http://127.0.0.1:{APP_PORT}",
+    session_lifetime=timedelta(hours=12)
 )
 
 
 @server.route("/")
 def root_route():
-    # Add "logout" button with "redirect_uri/logout" url to the page
     user = session["user"]
     data = session["data"]
-    return "Hello {} - calling from {} \n{}".format(user, g.external_url, data)
+    return (f"<div>Hello {user} - calling from {g.external_url}</div>"
+            f"<div>{data}</div>"
+            f"<a href='/logout'><button>Logout</button></a>")
 
 
 if __name__ == '__main__':
