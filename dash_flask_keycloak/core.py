@@ -146,7 +146,8 @@ class AuthMiddleWare:
         # Setup uris.
         self.before_login = before_login
         # Optionally, prefix callback path with current path.
-        self.callback_path = prefix_callback_path + "/keycloak/callback"
+        self.prefix = prefix_callback_path.rstrip('/')
+        self.callback_path = self.prefix + "/keycloak/callback"
         self.abort_on_unauthorized = abort_on_unauthorized
 
     def get_auth_uri(self, state, environ):
@@ -167,9 +168,9 @@ class AuthMiddleWare:
             return f"{scheme}://{host}"
 
     def redirect_to_login_page(self, state, environ, path):
-        if path != '/_dash-update-component':
-            return redirect(self.get_auth_uri(state, environ))
-        return Response(json.dumps({"multi": True, "response": {"url": {"pathname": "/login"}}}))
+        if '/_dash-update-component' in path:
+            return Response(json.dumps({"multi": True, "response": {"url": {"pathname": self.prefix + "/login"}}}))
+        return redirect(self.get_auth_uri(state, environ))
 
     def __call__(self, environ, start_response):
         response = None
@@ -254,7 +255,10 @@ class FlaskKeycloak:
                 from dash import dcc
             except ImportError:
                 raise RuntimeError('Perhaps you did not install Dash package?')
-            app.layout.children.append(dcc.Location(id='url', refresh=True))
+            try:
+                app.layout.children.append(dcc.Location(id='url', refresh=True))
+            except AttributeError:
+                app.layout.children = [app.layout.children, dcc.Location(id='url', refresh=True)]
         # Add middleware.
         auth_handler = AuthHandler(server.wsgi_app, server.config, server.session_interface, keycloak_openid,
                                    ssl_context,

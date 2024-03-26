@@ -25,6 +25,7 @@ conf = dict(server_url=KEYCLOAK_HOST,
 # Setup dash app.
 app = Dash(__name__)
 
+
 app.layout = html.Div(
     id="main",
     children=[
@@ -39,7 +40,7 @@ app.layout = html.Div(
     ]
 )
 
-# Should be after layout setup
+# Setup should be after layout initialization
 FlaskKeycloak.build(
     app,
     config_data=conf,
