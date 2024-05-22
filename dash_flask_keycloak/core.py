@@ -138,7 +138,7 @@ class AuthHandler:
 
 class AuthMiddleWare:
     def __init__(self, app, auth_handler, redirect_uri=None, uri_whitelist=None,
-                 prefix_callback_path=None, abort_on_unauthorized=None, before_login=None):
+                 url_prefix=None, keycloak_callback_prefix=None, abort_on_unauthorized=None, before_login=None):
         self.app = app
         self.auth_handler = auth_handler
         self._redirect_uri = redirect_uri
@@ -146,8 +146,9 @@ class AuthMiddleWare:
         # Setup uris.
         self.before_login = before_login
         # Optionally, prefix callback path with current path.
-        self.prefix = prefix_callback_path.rstrip('/')
-        self.callback_path = self.prefix + "/keycloak/callback"
+        self.prefix = url_prefix.rstrip('/')
+        self.callback_path = self.prefix + keycloak_callback_prefix if keycloak_callback_prefix is not None \
+            else self.prefix + "/keycloak/callback"
         self.abort_on_unauthorized = abort_on_unauthorized
 
     def get_auth_uri(self, state, environ):
@@ -232,9 +233,9 @@ class AuthMiddleWare:
 class FlaskKeycloak:
     def __init__(self, app, keycloak_openid, redirect_uri=None, uri_whitelist=None, logout_path=None,
                  heartbeat_path=None,
-                 login_path=None, prefix_callback_path=None,
+                 login_path=None, url_prefix=None,
                  abort_on_unauthorized=None, before_login=None, ssl_context=None, state_control=True,
-                 session_lifetime=None):
+                 session_lifetime=None, keycloak_callback_prefix=None):
         server = app if isinstance(app, Flask) else app.server
         logout_path = '/logout' if logout_path is None else logout_path
         uri_whitelist = [] if uri_whitelist is None else uri_whitelist
@@ -264,7 +265,7 @@ class FlaskKeycloak:
                                    ssl_context,
                                    state_control, session_lifetime)
         auth_middleware = AuthMiddleWare(server.wsgi_app, auth_handler, redirect_uri, uri_whitelist,
-                                         prefix_callback_path, abort_on_unauthorized, before_login)
+                                         url_prefix, keycloak_callback_prefix, abort_on_unauthorized, before_login)
 
         def _save_external_url():
             g.external_url = auth_middleware.get_redirect_uri(request.environ)
@@ -312,9 +313,9 @@ class FlaskKeycloak:
               config_data: Union[str, dict] = None,
               logout_path: str = None, heartbeat_path: str = None,
               authorization_settings_path: str = None, uri_whitelist: List[str] = None, login_path: str = None,
-              prefix_callback_path: str = '', abort_on_unauthorized: List[str] = None, debug_user=None,
+              url_prefix: str = '', abort_on_unauthorized: List[str] = None, debug_user=None,
               debug_roles: str = None, ssl_context: ssl.SSLContext = None, state_control: bool = True,
-              session_lifetime: Union[int, timedelta] = None):
+              session_lifetime: Union[int, timedelta] = None, keycloak_callback_prefix: str = None):
         """
         Build FlaskKeycloak class instance
 
@@ -327,7 +328,7 @@ class FlaskKeycloak:
         :param authorization_settings_path: keycloak authorization settings
         :param uri_whitelist: uri which will proceed upon authorization
         :param login_path: if given, this route will proceed upon authorization and credentials can be given as json via post request
-        :param prefix_callback_path: prefix callback path
+        :param url_prefix: additional url path
         :param abort_on_unauthorized: list of url which will abort anyway and redirect to login page
         :param debug_user: username for debug
         :param debug_roles: user roles for debug
@@ -335,6 +336,7 @@ class FlaskKeycloak:
         :param state_control: if True, will control state parameter in keycloak redirect uri and in session's cookie
         :param session_lifetime: if isn't None, session will include lifespan.
             Should be a datetime.timedelta object or count of seconds (int).
+        :param keycloak_callback_prefix: keycloak callback prefix, as a default: https://<url_to_app>/keycloak/callback/
         :return: FlaskKeycloak class instance
         """
         try:
@@ -359,10 +361,11 @@ class FlaskKeycloak:
             keycloak_openid = KeycloakOpenID("url", "name", "client_id", "client_secret_key")
         return FlaskKeycloak(app, keycloak_openid, redirect_uri, logout_path=logout_path,
                              heartbeat_path=heartbeat_path, uri_whitelist=uri_whitelist, login_path=login_path,
-                             prefix_callback_path=prefix_callback_path,
+                             url_prefix=url_prefix,
                              abort_on_unauthorized=abort_on_unauthorized,
                              before_login=_setup_debug_session(debug_user, debug_roles), ssl_context=ssl_context,
-                             state_control=state_control, session_lifetime=session_lifetime)
+                             state_control=state_control, session_lifetime=session_lifetime,
+                             keycloak_callback_prefix=keycloak_callback_prefix)
 
     @staticmethod
     def try_build(app, **kwargs):
