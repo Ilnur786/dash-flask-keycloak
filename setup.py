@@ -7,7 +7,7 @@ README = (HERE / "README.md").read_text()
 
 setup(
     name="dash-flask-keycloak",
-    version="1.2.1",
+    version="1.3.1",
     description="Extension providing Keycloak integration via the python-keycloak package to the Dash/Flask app",
     long_description=README,
     long_description_content_type="text/markdown",
